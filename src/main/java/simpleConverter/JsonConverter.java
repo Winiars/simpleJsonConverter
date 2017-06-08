@@ -2,11 +2,12 @@ package simpleConverter;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
-import java.util.*;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
-/**
- * Created by JIT on 05.06.2017.
- */
+
 public class JsonConverter {
 
 
@@ -21,114 +22,55 @@ public class JsonConverter {
 
         Class<?> cls = objectToConvert.getClass();
 
-        if(Collection.class.isAssignableFrom(cls)){
-            Collection<?> collection = (Collection) objectToConvert;
-            sb.append("[");
-            for (Object obj : collection) {
-                appendObject(obj, sb);
-            }
-            sb.deleteCharAt(sb.lastIndexOf(","));
-            sb.append("]");
-            return sb.toString();
-        }
-
-        if(cls.isArray()){
-            sb.append("[");
-            int length = Array.getLength(objectToConvert);
-            for (int i = 0; i < length; i++) {
-                Object arrayObject = Array.get(objectToConvert, i);
-                appendObject(arrayObject, sb);
-            }
-            sb.deleteCharAt(sb.lastIndexOf(","));
-            sb.append("]");
-            return sb.toString();
-        }
-
-
-        Field[] fields = cls.getDeclaredFields();
-
-        addBeginningBrackets(sb, objectToConvert);
-
-        for (Field field : fields) {
-            field.setAccessible(true);
-            Object fieldValue = field.get(objectToConvert);
-            Class<?> fieldType = field.getType();
-
-            if (fieldValue == null) {
-                continue;
-            }
-            sb.append("\"");
-            sb.append(field.getName());
-            sb.append("\":");
-
-            addValues(sb, fieldValue, fieldType);
-
-        }
-        sb.deleteCharAt(sb.lastIndexOf(","));
-
-        if (Collection.class.isAssignableFrom(cls)) {
-            sb.append("]");
+        if (isCollectionOrMapAOrArrayOrStringOrEnumOrPrimitiveTypeOrWrapperType(cls)) {
+            appendObjectWithoutFields(objectToConvert, sb);
         } else {
-            sb.append("}");
+            appendObjectWithFields(objectToConvert, sb);
         }
         return sb.toString();
     }
 
-    private void addBeginningBrackets(StringBuilder sb, Object object) {
-        Class<?> cls = object.getClass();
-        if (Collection.class.isAssignableFrom(cls)) {
-            sb.append("[");
-        } else {
-            sb.append("{");
+
+    private void appendObjectWithoutFields(Object objectToConvert, StringBuilder sb) throws IllegalAccessException {
+        Class<?> cls = objectToConvert.getClass();
+        addValues(sb, objectToConvert, cls);
+    }
+
+    private void appendObjectWithFields(Object objectToConvert, StringBuilder sb) throws IllegalAccessException {
+
+        Class<?> cls = objectToConvert.getClass();
+        Field[] fields = cls.getDeclaredFields();
+
+        appendOpeningBrackets(objectToConvert, sb);
+
+        for (Field field : fields) {
+            appendFieldAndFieldValue(field, objectToConvert, sb);
         }
+        sb.deleteCharAt(sb.lastIndexOf(","));
+
+        appendClosingBrackets(objectToConvert, sb);
     }
 
     private void addValues(StringBuilder sb, Object fieldValue, Class<?> fieldType) throws IllegalAccessException {
 
-        if (String.class.isAssignableFrom(fieldType) || Enum.class.isAssignableFrom(fieldType)) {
-            sb.append("\"");
-            sb.append(fieldValue.toString());
-            sb.append("\"");
-        } else if (!fieldType.isPrimitive() && !Collection.class.isAssignableFrom(fieldType) && !fieldType.isArray()&&!Map.class.isAssignableFrom(fieldType)) {
+        if (isStringOrEnum(fieldType)) {
+            surroundWithQuotation(fieldValue, sb);
+        } else if (isNotCollectionAndMapAndArrayAndPrimitiveTypeAndWrapperType(fieldType)) {
             sb.append(toJson(fieldValue));
-        } else if (Collection.class.isAssignableFrom(fieldType)) {
-            Collection<?> collection = (Collection) fieldValue;
-            sb.append("[");
-            for (Object obj : collection) {
-                appendObject(obj, sb);
-            }
-            sb.deleteCharAt(sb.lastIndexOf(","));
-            sb.append("]");
+        } else if (isCollection(fieldType)) {
+            appendElementsOfCollection(fieldValue, sb);
         } else if (fieldType.isArray()) {
-            sb.append("[");
-            int length = Array.getLength(fieldValue);
-            for (int i = 0; i < length; i++) {
-                Object arrayObject = Array.get(fieldValue, i);
-                appendObject(arrayObject, sb);
-            }
-            sb.deleteCharAt(sb.lastIndexOf(","));
-            sb.append("]");
-        } else if (Map.class.isAssignableFrom(fieldType)) {
-            Map<?, ?> map = (Map) fieldValue;
-            sb.append("{");
-            for (Map.Entry<?, ?> entry : map.entrySet()) {
-                sb.append("\"");
-                sb.append(entry.getKey().toString());
-                sb.append("\":");
-                sb.append("\"");
-                sb.append(entry.getValue().toString());
-                sb.append("\":,");
-                sb.deleteCharAt(sb.lastIndexOf(":"));
-            }
-            sb.deleteCharAt(sb.lastIndexOf(","));
-            sb.append("}");
+            appendElementsOfArray(fieldValue, sb);
+        } else if (isMap(fieldType)) {
+            appendElementsOfMap(fieldValue, sb);
         } else {
             sb.append(fieldValue.toString());
         }
-        sb.append(",");
+
     }
 
-    public static boolean isWrapperType(Class<?> cls) {
+
+    private static boolean isWrapperType(Class<?> cls) {
         return WRAPPERS.contains(cls);
     }
 
@@ -147,16 +89,121 @@ public class JsonConverter {
     }
 
     private void appendObject(Object obj, StringBuilder sb) throws IllegalAccessException {
-        if (!isWrapperType(obj.getClass()) && !obj.getClass().isAssignableFrom(String.class)) {
+        Class<?> cls = obj.getClass();
+        if (!isWrapperType(obj.getClass()) && !isString(cls)) {
             sb.append(toJson(obj));
             sb.append(",");
-        } else if (obj.getClass().isAssignableFrom(String.class)) {
-            sb.append("\"");
-            sb.append(obj.toString());
-            sb.append("\",");
+        } else if (isString(cls)) {
+            surroundWithQuotation(obj, sb);
+            sb.append(",");
         } else {
             sb.append(obj.toString());
             sb.append(",");
         }
     }
+
+    private boolean isCollection(Class<?> cls) {
+        return Collection.class.isAssignableFrom(cls);
+    }
+
+    private boolean isMap(Class<?> cls) {
+        return Map.class.isAssignableFrom(cls);
+    }
+
+    private boolean isNotCollectionAndMapAndArrayAndPrimitiveTypeAndWrapperType(Class<?> cls) {
+        return !cls.isPrimitive() && !isCollection(cls) && !cls.isArray() && !isMap(cls) && !isWrapperType(cls);
+    }
+
+    private boolean isCollectionOrMapAOrArrayOrStringOrEnumOrPrimitiveTypeOrWrapperType(Class<?> cls) {
+        return cls.isPrimitive() || isCollection(cls) || cls.isArray() || isMap(cls) || isStringOrEnum(cls) || isWrapperType(cls);
+    }
+
+    private boolean isString(Class<?> cls) {
+        return String.class.isAssignableFrom(cls);
+    }
+
+    private boolean isEnum(Class<?> cls) {
+        return Enum.class.isAssignableFrom(cls);
+    }
+
+    private boolean isStringOrEnum(Class<?> cls) {
+        return isString(cls) || isEnum(cls);
+    }
+
+    private void surroundWithQuotation(Object obj, StringBuilder sb) {
+        sb.append("\"");
+        sb.append(obj.toString());
+        sb.append("\"");
+    }
+
+    private void appendElementsOfCollection(Object fieldValue, StringBuilder sb) throws IllegalAccessException {
+        Collection<?> collection = (Collection) fieldValue;
+        sb.append("[");
+        for (Object obj : collection) {
+            appendObject(obj, sb);
+        }
+        sb.deleteCharAt(sb.lastIndexOf(","));
+        sb.append("]");
+    }
+
+    private void appendElementsOfArray(Object fieldValue, StringBuilder sb) throws IllegalAccessException {
+        sb.append("[");
+        int length = Array.getLength(fieldValue);
+        for (int i = 0; i < length; i++) {
+            Object arrayObject = Array.get(fieldValue, i);
+            appendObject(arrayObject, sb);
+        }
+        sb.deleteCharAt(sb.lastIndexOf(","));
+        sb.append("]");
+    }
+
+    private void appendElementsOfMap(Object fieldValue, StringBuilder sb) {
+        Map<?, ?> map = (Map) fieldValue;
+        sb.append("{");
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            surroundWithQuotation(entry.getKey(), sb);
+            sb.append(":");
+            surroundWithQuotation(entry.getValue(), sb);
+            sb.append(":,");
+            sb.deleteCharAt(sb.lastIndexOf(":"));
+        }
+        sb.deleteCharAt(sb.lastIndexOf(","));
+        sb.append("}");
+    }
+
+    private void appendFieldAndFieldValue(Field field, Object objectToConvert, StringBuilder sb) throws IllegalAccessException {
+        field.setAccessible(true);
+        Object fieldValue = field.get(objectToConvert);
+        Class<?> fieldType = field.getType();
+
+        if (fieldValue == null) {
+            return;
+        }
+        surroundWithQuotation(field.getName(), sb);
+        sb.append(":");
+
+        addValues(sb, fieldValue, fieldType);
+        sb.append(",");
+
+    }
+
+    private void appendClosingBrackets(Object object, StringBuilder sb) {
+        Class<?> cls = object.getClass();
+        if (isCollection(cls)) {
+            sb.append("]");
+        } else {
+            sb.append("}");
+        }
+
+    }
+
+    private void appendOpeningBrackets(Object object, StringBuilder sb) {
+        Class<?> cls = object.getClass();
+        if (isCollection(cls)) {
+            sb.append("[");
+        } else {
+            sb.append("{");
+        }
+    }
+
 }
